@@ -7,6 +7,7 @@ Usa a MESMA fisica/constantes do flappy.py. O ambiente aqui e puro Python
 Uso:
   python flappy_q.py train   # treina, salva q_table.pkl, treino.csv, grafico_treino.png
   python flappy_q.py eval    # avalia a politica gulosa em N sementes (resultados.csv)
+  python flappy_q.py train_visual  # treina COM janela (tecla F = modo rapido)
   python flappy_q.py demo    # mostra o agente treinado jogando (precisa de pygame)
 """
 import csv
@@ -102,6 +103,48 @@ class FlappyEnv:
         return self.estado(), recompensa, False
 
 
+# ---------------- Janela visual (pygame, so importado se for usado) ----------------
+class Janela:
+    """Desenha o jogo. Tecla F alterna entre modo normal (60 FPS) e rapido."""
+
+    def __init__(self, titulo):
+        import pygame
+        self.pg = pygame
+        pygame.init()
+        self.tela = pygame.display.set_mode((LARGURA, ALTURA))
+        pygame.display.set_caption(titulo)
+        self.relogio = pygame.time.Clock()
+        self.fonte = pygame.font.SysFont("arial", 36, bold=True)
+        self.pequena = pygame.font.SysFont("arial", 18, bold=True)
+        self.rapido = False
+        self.passos = 0
+
+    def quadro(self, env, linhas=()):
+        pg = self.pg
+        for e in pg.event.get():
+            if e.type == pg.QUIT:
+                pg.quit()
+                sys.exit()
+            if e.type == pg.KEYDOWN and e.key == pg.K_f:
+                self.rapido = not self.rapido
+        self.passos += 1
+        if self.rapido and self.passos % 30:   # modo rapido: desenha 1 a cada 30 passos
+            return
+        self.tela.fill((135, 206, 235))
+        for c in env.canos:
+            pg.draw.rect(self.tela, (40, 180, 60), (c.x, 0, C_LARGURA, c.altura_topo))
+            pg.draw.rect(self.tela, (40, 180, 60), (c.x, c.y_base, C_LARGURA, CHAO - c.y_base))
+        pg.draw.rect(self.tela, (222, 184, 135), (0, CHAO, LARGURA, ALTURA - CHAO))
+        pg.draw.circle(self.tela, (255, 220, 0), (X_PASSARO, int(env.y)), RAIO)
+        txt = self.fonte.render(str(env.pontos), True, (255, 255, 255))
+        self.tela.blit(txt, (LARGURA // 2 - txt.get_width() // 2, 30))
+        for i, linha in enumerate(linhas):
+            self.tela.blit(self.pequena.render(linha, True, (255, 255, 255)), (10, 10 + i * 22))
+        pg.display.update()
+        if not self.rapido:
+            self.relogio.tick(60)
+
+
 # ---------------- Agente ----------------
 def nova_tabela():
     return defaultdict(lambda: [0.0, 0.0])
@@ -120,7 +163,9 @@ def jogar_guloso(Q, semente, meta=100):
     return env.pontos
 
 
-def treinar():
+def treinar(visual=False):
+    janela = Janela("Flappy Bird - Treino Q-Learning") if visual else None
+    recorde = 0
     rng = random.Random(SEMENTE_TREINO)
     Q = nova_tabela()
     historico = []
@@ -133,6 +178,10 @@ def treinar():
         while not fim and env.pontos < MAX_CANOS_TREINO:
             a = (1 if rng.random() < P_PULO_EXPLORA else 0) if rng.random() < eps else melhor_acao(Q, s)
             s2, r, fim = env.passo(a)
+            if janela:
+                recorde = max(recorde, env.pontos)
+                janela.quadro(env, (f"Episodio: {ep}/{N_EPISODIOS}", f"Epsilon: {eps:.3f}",
+                                    f"Recorde: {recorde}", "F = modo rapido"))
             alvo = r if fim else r + GAMA * max(Q[s2])
             Q[s][a] += alfa * (alvo - Q[s][a])
             s = s2
@@ -211,38 +260,20 @@ def avaliar(n=100, meta=100):
 
 # ---------------- Demonstracao visual ----------------
 def demo():
-    import pygame
-    pygame.init()
-    tela = pygame.display.set_mode((LARGURA, ALTURA))
-    pygame.display.set_caption("Flappy Bird - Q-Learning")
-    relogio = pygame.time.Clock()
-    fonte = pygame.font.SysFont("arial", 36, bold=True)
+    janela = Janela("Flappy Bird - Q-Learning")
     Q = carregar_q()
     while True:
         env = FlappyEnv()
         s, fim = env.reset(), False
         while not fim:
-            for e in pygame.event.get():
-                if e.type == pygame.QUIT:
-                    pygame.quit()
-                    return
             s, _, fim = env.passo(melhor_acao(Q, s))
-            tela.fill((135, 206, 235))
-            for c in env.canos:
-                pygame.draw.rect(tela, (40, 180, 60), (c.x, 0, C_LARGURA, c.altura_topo))
-                pygame.draw.rect(tela, (40, 180, 60), (c.x, c.y_base, C_LARGURA, CHAO - c.y_base))
-            pygame.draw.rect(tela, (222, 184, 135), (0, CHAO, LARGURA, ALTURA - CHAO))
-            pygame.draw.circle(tela, (255, 220, 0), (X_PASSARO, int(env.y)), RAIO)
-            txt = fonte.render(str(env.pontos), True, (255, 255, 255))
-            tela.blit(txt, (LARGURA // 2 - txt.get_width() // 2, 30))
-            pygame.display.update()
-            relogio.tick(60)
+            janela.quadro(env, ("Agente treinado", "F = modo rapido"))
 
 
 if __name__ == "__main__":
     modo = sys.argv[1] if len(sys.argv) > 1 else "train"
-    if modo == "train":
-        treinar()
+    if modo in ("train", "train_visual"):
+        treinar(visual=(modo == "train_visual"))
         avaliar()
     elif modo == "eval":
         avaliar()
